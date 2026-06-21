@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/insight-core", "crates/insight-gui"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Insight contributors"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

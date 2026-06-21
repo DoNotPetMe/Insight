@@ -1,0 +1,45 @@
+name: Build
+
+# Builds the native Insight app. The Windows job produces the real Insight.exe
+# (uploaded as a downloadable artifact); the Linux job builds and runs the
+# engine tests. A native exe is built on its target OS — no cross-compiling.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release --bin insight
+      - name: Stage artifact
+        run: |
+          mkdir dist
+          copy target\release\insight.exe dist\Insight.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Insight-windows
+          path: dist/Insight.exe
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GUI build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev
+      - name: Test engine
+        run: cargo test -p insight-core
+      - name: Build
+        run: cargo build --release

@@ -1,0 +1,23 @@
+[package]
+name = "insight-gui"
+description = "Insight — a professional binary analysis & decompilation desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+default-run = "insight"
+
+[[bin]]
+name = "insight"
+path = "src/main.rs"
+
+[dependencies]
+insight-core = { path = "../insight-core" }
+eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.29"
+
+# Native file-open dialog where it uses a non-async system backend (Win32 /
+# Cocoa). On Linux we use drag-and-drop + a path field, avoiding the portal's
+# async-runtime dependency.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+rfd = { version = "0.15" }

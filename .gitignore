@@ -1,11 +1,15 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Python (legacy-python/)
 __pycache__/
 *.pyc
-*.pyo
 .pytest_cache/
 *.egg-info/
 build/
 dist/
-.venv/
-venv/
+
+# misc
 *.elf
-/tmp/
+.DS_Store

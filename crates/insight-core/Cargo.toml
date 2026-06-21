@@ -1,0 +1,11 @@
+[package]
+name = "insight-core"
+description = "Binary loading, disassembly and analysis engine for Insight"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+object = { version = "0.36", default-features = false, features = ["read", "std"] }
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
