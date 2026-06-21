@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Insight — binary analysis &amp; decompilation</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <div class="brand">◢ Insight</div>
+    <div id="meta" class="meta">no file loaded</div>
+    <label class="upload">
+      load file…
+      <input type="file" id="fileInput" hidden>
+    </label>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div class="search"><input id="filter" placeholder="filter functions…"></div>
+      <ul id="funcList"></ul>
+    </aside>
+
+    <section id="content">
+      <div class="tabs">
+        <button class="tab active" data-view="pseudo">Pseudocode</button>
+        <button class="tab" data-view="disasm">Disassembly</button>
+        <button class="tab" data-view="strings">Strings</button>
+      </div>
+      <div id="view"><div class="empty">Select a function to begin.</div></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
