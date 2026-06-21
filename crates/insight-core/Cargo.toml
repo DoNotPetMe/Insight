@@ -9,3 +9,14 @@ authors.workspace = true
 [dependencies]
 object = { version = "0.36", default-features = false, features = ["read", "std"] }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
+regex = "1"
+walkdir = "2"
+sysinfo = "0.32"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+] }

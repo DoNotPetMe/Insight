@@ -3,11 +3,15 @@
 //! can run on a background thread.
 
 pub mod analysis;
+pub mod decompiler;
 pub mod disasm;
+pub mod game;
+pub mod live;
 pub mod loader;
 pub mod strings;
 
 pub use analysis::{analyze, Analysis, Function};
+pub use decompiler::{decompile, decompile_lines};
 pub use disasm::{Flow, Insn};
 pub use loader::{Arch, Program, Segment, Symbol};
 pub use strings::{find_strings, FoundString};
@@ -57,6 +61,61 @@ mod tests {
         assert_eq!(proj.program.arch, Arch::X64);
         assert_eq!(proj.functions.len(), 1);
         assert!(proj.functions[0].insns.len() >= 2);
+    }
+
+    #[test]
+    fn decompiles_to_pseudocode() {
+        let proj = Project::analyze(CODE, |_, _| {});
+        let func = &proj.functions[0];
+        let code = decompiler::decompile(func, &proj.program);
+        assert!(code.contains("void "));
+        assert!(code.contains("return;"));
+        // xor eax, eax  ->  eax ^= eax;
+        assert!(code.contains("^="));
+    }
+
+    #[test]
+    fn detects_engine_from_magic() {
+        let d = game::detect::detect_bytes(b"GSV1....", "x.gsv");
+        assert_eq!(d[0].engine_id, "gamescript");
+        let g = game::detect::detect_bytes(b"GDPC\x01\x00", "x.pck");
+        assert_eq!(g[0].engine_id, "godot");
+    }
+
+    #[test]
+    fn discovery_flags_categories() {
+        let names = ["test_map_arena", "DEV_ROOM", "unused_enemy_OLD", "god_mode", "main_menu"];
+        let found = game::discovery::report(game::discovery::scan_names(names));
+        let cats: Vec<String> = found.iter().map(|f| f.category.clone()).collect();
+        for c in ["test_map", "dev_room", "unused", "cheat"] {
+            assert!(cats.iter().any(|x| x == c), "missing {c} in {cats:?}");
+        }
+    }
+
+    #[test]
+    fn live_requires_authorization() {
+        let pid = std::process::id();
+        assert!(live::LiveSession::open(pid, false).is_err());
+    }
+
+    #[test]
+    fn live_lists_self() {
+        let procs = live::list_processes();
+        assert!(procs.iter().any(|p| p.pid == std::process::id()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_scans_own_memory() {
+        // a unique marker kept alive on the heap
+        let marker = b"INSIGHT_RUST_MARKER_c0ffee99".to_vec();
+        let pid = std::process::id();
+        let session = live::LiveSession::open(pid, true).expect("attach self");
+        assert!(!session.regions().is_empty());
+        let hits = session.scan_bytes(&marker, 10);
+        assert!(!hits.is_empty(), "should find the marker in own memory");
+        // keep marker alive past the scan
+        assert_eq!(&marker[..6], b"INSIGH");
     }
 
     #[test]

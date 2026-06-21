@@ -21,6 +21,7 @@ impl Palette {
     pub const MN_JUMP: Color32 = Color32::from_rgb(0xe6, 0xa3, 0x6b);
     pub const MN_RET: Color32 = Color32::from_rgb(0xf0, 0x84, 0x7c);
     pub const STR: Color32 = Color32::from_rgb(0x9d, 0xd6, 0x8a);
+    pub const NUM: Color32 = Color32::from_rgb(0x6f, 0xb8, 0xff);
 }
 
 pub fn apply(ctx: &egui::Context) {

@@ -23,11 +23,24 @@ large game executable never freezes the window.
   decoder (no C toolchain needed to build).
 - **Function & block recovery** — seeds from symbols, the entry point and call
   targets; each function is carved into basic blocks.
+- **Decompiler / pseudocode** — each function is lifted to readable C-like
+  pseudocode: assignments, `cmp`/`jcc` folded into `if` conditions, resolved
+  `call` names, and labelled blocks with `goto`.
+- **Game-engine detection** — identifies Unity (Mono/IL2CPP), Unreal,
+  GameMaker, Godot, Ren'Py, RPG Maker, Source, Construct and id Tech from file
+  magic and install-folder fingerprints, with the recommended open-source
+  unpacker for each.
+- **Content discovery** — flags dev rooms, test maps, debug menus, unused /
+  leftover content, cheats, placeholders and beta material from strings and
+  filenames.
+- **Live memory scanning** — attach to a running game and scan its memory for a
+  string or integer (Linux `/proc` and Windows `ReadProcessMemory`), gated
+  behind an explicit authorisation check.
 - **Professional UI** — function list with live filter, virtualized disassembly
   listing with colour-coded mnemonics, click-to-navigate call/jump targets,
-  segments view, strings view, and a hex view.
-- **Never freezes** — loading/analysis happens on a worker thread that streams
-  progress back to a responsive UI.
+  plus Pseudocode / Hex / Segments / Strings / Game / Discovery / Live views.
+- **Never freezes** — loading, analysis and memory scans run on worker threads
+  that stream progress back to a responsive UI.
 - **Single native binary** — ships as one `Insight.exe` (or a Linux/macOS
   binary), no runtime to install.
 
@@ -88,22 +101,22 @@ crates/
     src/loader.rs           PE/ELF/Mach-O → format-neutral Program (object crate)
     src/disasm.rs           x86/x64 disassembly (iced-x86)
     src/analysis.rs         function discovery + basic-block carving
+    src/decompiler.rs       instruction lifting → C-like pseudocode
     src/strings.rs          printable-string recovery
+    src/game/               engine detection, tool registry, content discovery
+    src/live.rs             live process-memory scanning (Linux /proc + Windows)
     src/lib.rs              Project::analyze() + tests
   insight-gui/              eframe/egui desktop app
-    src/app.rs              3-pane UI, listing, navigation
-    src/worker.rs           background analysis thread (keeps UI responsive)
+    src/app.rs              multi-pane UI, listing, navigation, all views
+    src/worker.rs           background load + scan threads (keeps UI responsive)
     src/theme.rs            professional dark theme
     src/main.rs             entry point
 .github/workflows/build.yml Windows (.exe) + Linux CI
 legacy-python/              the earlier Python prototype, kept for reference
 ```
 
-The `legacy-python/` tree holds the previous Python/Qt prototype. Its
-GameScript bytecode decompiler, game-engine detection, content-discovery
-scanner and live memory-scanning logic are the reference for features being
-ported onto the Rust core next (decompilation to pseudocode, engine detection,
-discovery, live scanning).
+The `legacy-python/` tree holds the previous Python/Qt prototype that these
+Rust features were ported from; it is no longer needed to run Insight.
 
 ---
 
