@@ -1,0 +1,7 @@
+# Full feature set: core engine + desktop GUI + game unpackers + live scanning.
+# (requirements.txt holds just the core needed for the CLI/web analysis.)
+capstone>=5.0.0
+flask>=3.0.0
+PySide6-Essentials>=6.5.0   ; desktop app (insight-desktop)
+UnityPy>=1.20               ; Unity asset/script ingestion
+PyMemoryEditor>=2.0         ; live memory scanning on Windows/macOS/Linux

@@ -1,0 +1,44 @@
+name: Build Windows app
+
+# Produces the actual Insight.exe. Runs on a Windows runner because a real
+# Windows executable can only be built on Windows (PyInstaller does not
+# cross-compile). The packaged app is uploaded as a downloadable artifact.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install PySide6-Essentials UnityPy PyMemoryEditor pyinstaller
+
+      - name: Run tests
+        run: |
+          pip install pytest
+          python -m pytest -q
+
+      - name: Build executable
+        run: pyinstaller packaging/insight.spec --noconfirm
+
+      - name: Package
+        run: Compress-Archive -Path dist/Insight/* -DestinationPath Insight-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Insight-windows
+          path: Insight-windows.zip
+          if-no-files-found: error

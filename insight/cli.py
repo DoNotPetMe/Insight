@@ -86,6 +86,87 @@ def cmd_serve(args):
     app.run(host=args.host, port=args.port, debug=False)
 
 
+# -- game-target commands ---------------------------------------------------
+def cmd_detect(args):
+    from .game.detect import detect_path
+    from .game import engines
+    from .frontends import registry
+    dets = detect_path(args.file)
+    if not dets:
+        print("no engine detected")
+        return
+    for d in dets:
+        eng = engines.get(d.engine_id)
+        name = eng.name if eng else d.engine_id
+        var = f" [{d.variant}]" if d.variant else ""
+        print(f"{d.confidence*100:5.0f}%  {name}{var}")
+        for ev in d.evidence:
+            print(f"          · {ev}")
+        fe = registry.for_engine(d.engine_id)
+        if eng:
+            print(f"          runtime: {eng.runtime}")
+        if fe:
+            print(f"          decompiler: {fe.strategy} ({fe.status}) — {fe.detail}")
+
+
+def cmd_tools(args):
+    from .game.detect import detect_path
+    from .game import unpack
+    dets = detect_path(args.file)
+    if not dets:
+        print("no engine detected")
+        return
+    eid = dets[0].engine_id
+    print(f"recommended open-source tools for {eid}:")
+    for t in unpack.tool_status(eid):
+        mark = ""
+        if t["python"]:
+            mark = "  [installed]" if t["installed"] else "  [pip install]"
+        print(f"  {t['name']:<28} {t['purpose']:<8} {t['url']}{mark}")
+
+
+def cmd_discover(args):
+    from .game.target import GameTarget
+    rep = GameTarget(args.file).analyze(do_ingest=True, do_discovery=True)
+    if rep.best:
+        print(f"engine: {rep.best.engine_id} ({rep.best.confidence*100:.0f}%)")
+    if rep.ingestion:
+        print(f"ingested: {len(rep.ingestion.assets)} assets, "
+              f"{len(rep.ingestion.scripts)} scripts via {rep.ingestion.handled_by or 'n/a'}")
+    disc = rep.discovery
+    if not disc or not disc.findings:
+        print("no notable content discovered")
+        return
+    print(f"discoveries: {disc.summary()}")
+    for f in disc.findings[:args.limit]:
+        print(f"  [{f.category:<11}] {f.matched:<16} ({f.source})  {f.text[:70]}")
+
+
+def cmd_procs(args):
+    from .live.memscan import list_processes
+    for p in list_processes():
+        print(f"{p.pid:>8}  {p.name}")
+
+
+def cmd_memscan(args):
+    from .live.memscan import LiveSession
+    if not args.authorize:
+        print("error: pass --authorize to confirm you may inspect this process",
+              file=sys.stderr)
+        sys.exit(1)
+    with LiveSession(args.pid, authorized=True) as s:
+        if args.string is not None:
+            hits = s.scan_string(args.string, limit=args.limit)
+        elif args.int is not None:
+            hits = s.scan_int(args.int, size=args.size, limit=args.limit)
+        else:
+            print(f"{len(s.regions())} mapped regions")
+            return
+        print(f"{len(hits)} hit(s):")
+        for h in hits:
+            print(f"  {h:#x}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="insight",
                                 description="Interactive binary analysis & decompilation")
@@ -110,6 +191,26 @@ def main(argv=None):
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8000)
     sp.set_defaults(handler=cmd_serve)
+
+    sp = sub.add_parser("detect", help="identify the game engine"); add_file(sp)
+    sp.set_defaults(handler=cmd_detect)
+    sp = sub.add_parser("tools", help="recommended open-source tools"); add_file(sp)
+    sp.set_defaults(handler=cmd_tools)
+    sp = sub.add_parser("discover", help="find dev rooms / test maps / unused content")
+    add_file(sp)
+    sp.add_argument("--limit", type=int, default=40)
+    sp.set_defaults(handler=cmd_discover)
+    sp = sub.add_parser("procs", help="list running processes")
+    sp.set_defaults(handler=cmd_procs)
+    sp = sub.add_parser("memscan", help="scan a live process's memory")
+    sp.add_argument("pid", type=int)
+    sp.add_argument("--string", help="scan for a string value")
+    sp.add_argument("--int", type=int, help="scan for an integer value")
+    sp.add_argument("--size", type=int, default=4, choices=[1, 2, 4, 8])
+    sp.add_argument("--limit", type=int, default=100)
+    sp.add_argument("--authorize", action="store_true",
+                    help="confirm you are permitted to inspect this process")
+    sp.set_defaults(handler=cmd_memscan)
 
     args = p.parse_args(argv)
     args.handler(args)

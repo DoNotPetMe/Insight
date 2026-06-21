@@ -1,26 +1,42 @@
 # Insight
 
-**Insight** is an interactive binary-analysis and decompilation platform. It
-loads a program, disassembles it, reconstructs control flow, and lifts the
-result into readable C-like pseudocode — in a terminal or a browser.
+**Insight** is an interactive binary-analysis and decompilation platform built
+for **game modding and discovery**. It identifies the engine behind a game,
+unpacks it, disassembles and decompiles its logic into readable C-like
+pseudocode, hunts down hidden content (dev rooms, test maps, unused/debug
+content), and can even scan a game's memory while it runs — from a terminal, a
+browser, or a native desktop app.
 
-It has two analysis front ends that share one decompiler and UI:
+### Analysis front ends (one shared decompiler & UI)
 
 | Front end | Input | What you get |
 |-----------|-------|--------------|
-| **Native** | ELF / PE executables, or raw code blobs (x86, x64, ARM, ARM64) | function discovery, basic blocks, disassembly, and lifted low-level pseudocode |
-| **Script VM** | compiled **GameScript** bytecode modules | full decompilation back to structured pseudocode (`if`/`else`, `while`, calls, expressions) |
+| **Native** | ELF / PE executables, raw blobs (x86, x64, ARM, ARM64) — incl. Unity **IL2CPP**, Unreal C++, Source | function discovery, CFG, disassembly, lifted pseudocode |
+| **Script VM** | stack/register bytecode (the reference **GameScript** VM; GML, GDScript, Blueprint plug into the same pipeline) | full structured pseudocode (`if`/`else`, `while`, calls, expressions) |
 
-The Script-VM front end is aimed squarely at **game modding and discovery**:
-many engines ship their gameplay logic as compiled bytecode for an embedded
-scripting VM. Insight models such a VM end to end so those compiled scripts can
-be turned back into clean, editable pseudocode — making it far easier to
-understand quest logic, AI behaviour, and tunables, and to mod them.
+### Game-platform awareness
+
+Insight detects the engine, tells you exactly how it will decompile that
+engine's logic, points you at the right free/open-source unpacker, and (for
+Unity) ingests assets in-process via UnityPy:
+
+| Engine | Runtime | How Insight handles it | Recommended free tool |
+|--------|---------|------------------------|-----------------------|
+| **Unity** | Mono IL / IL2CPP native | IL2CPP → native lifter; assets via UnityPy | UnityPy, Il2CppDumper, AssetRipper, ILSpy |
+| **Unreal** | C++ + Blueprint bytecode | native lifter; Blueprint → stack-VM pipeline | CUE4Parse / FModel, pyUE4Parse |
+| **GameMaker** | GML bytecode | GML → stack-VM pipeline | UndertaleModTool |
+| **Godot** | GDScript bytecode | GDScript → stack-VM pipeline | Godot RE Tools (gdsdecomp) |
+| **Ren'Py** | compiled `.rpyc` | Python-AST path | unrpyc, rpatool |
+| **RPG Maker** | JS + JSON | read directly (already source) | MV/MZ decrypter |
+| **Source** | native + VPK/BSP | native lifter | VPKEdit, bspsrc |
+| **Construct** | JS runtime | read directly | — |
+| **id Tech / Doom** | native + WAD/PK3 | native lifter | SLADE |
 
 > Insight is an original, clean-room project for studying software you are
-> authorised to analyse (your own builds, CTF challenges, malware research,
-> interoperability, modding of games you own). It is not a clone of, and does
-> not reuse code or data from, any existing product.
+> authorised to analyse: your own builds, CTF challenges, security research,
+> interoperability, and **modding games you own**. It does not reuse code or
+> data from, and is not a clone of, any existing product. The third-party tools
+> above are independent open-source projects, linked for convenience.
 
 ---
 
@@ -46,6 +62,43 @@ Native binaries work the same way:
 python -m insight.cli decompile /path/to/program --func main
 python -m insight.cli serve     /path/to/program
 ```
+
+### Working with whole games
+
+```bash
+# identify the engine and how Insight will decompile it
+python -m insight.cli detect    "/path/to/Game"
+# point me at the right open-source unpacker (marks Python libs you have)
+python -m insight.cli tools     "/path/to/Game"
+# hunt for dev rooms, test maps, unused/debug content, cheats, placeholders
+python -m insight.cli discover  "/path/to/Game"
+```
+
+### Scanning a running game
+
+```bash
+python -m insight.cli procs                              # list processes
+python -m insight.cli memscan 12345 --string "100/100" --authorize
+python -m insight.cli memscan 12345 --int 1000 --size 4 --authorize
+```
+
+`--authorize` is required as an explicit acknowledgement that you are permitted
+to inspect that process. Reading another process's memory usually needs elevated
+privileges. Use it only on games you own.
+
+### Desktop app
+
+```bash
+pip install -r requirements-full.txt    # adds PySide6, UnityPy, PyMemoryEditor
+python -m insight.desktop                # native windowed app
+```
+
+The desktop app has **Overview** (engine + tools), **Code** (functions →
+disassembly/pseudocode), **Discovery**, and **Live** (attach + memory scan)
+tabs. A real **`Insight.exe`** is produced by the GitHub Actions
+`Build Windows app` workflow (a Windows runner — PyInstaller can't
+cross-compile), downloadable as the `Insight-windows` artifact, or build it
+yourself on Windows with `pyinstaller packaging/insight.spec`.
 
 ### Example
 
@@ -149,8 +202,14 @@ builder used to assemble test inputs and the sample module.
 | `insight decompile FILE [--func KEY]` | recovered pseudocode |
 | `insight strings FILE` | recovered strings |
 | `insight serve FILE [--host H] [--port N]` | interactive web UI |
+| `insight detect PATH` | identify the game engine + decompiler strategy |
+| `insight tools PATH` | recommended open-source unpackers for the engine |
+| `insight discover PATH` | flag dev rooms / test maps / unused / debug content |
+| `insight procs` | list running processes |
+| `insight memscan PID --string S \| --int N --authorize` | scan live process memory |
 
-`--func` accepts either a function name or the key shown by `list`.
+`--func` accepts either a function name or the key shown by `list`. `PATH` may
+be a single file or a whole game install directory.
 
 ---
 
@@ -166,17 +225,24 @@ insight/
   analysis/              function discovery, CFG, strings
   decompiler/
     ast_nodes.py         shared C-like AST + pseudocode emitter
+    structuring.py       engine-neutral if/else + loop recovery (shared core)
     native.py            native lifter
-  gamescript/
-    isa.py               VM instruction set & module format spec
-    module.py            container reader/writer
-    assembler.py         body builder (labels + branch fixups)
-    disassembler.py      bytecode decoder
-    cfg.py               basic blocks / CFG
-    decompiler.py        symbolic execution + structuring → pseudocode
+  gamescript/            reference stack-VM front end (isa/module/assembler/
+                         disassembler/cfg/decompiler)
+  frontends/registry.py  per-engine decompiler strategy + status
+  game/
+    engines.py           engine registry + open-source tool references
+    detect.py            engine detection (file magic + directory fingerprints)
+    unpack.py            asset/script ingestion (UnityPy in-process)
+    discovery.py         dev-room / test-map / unused-content scanner
+    target.py            high-level game-target facade
+  live/memscan.py        live process-memory scanning (Linux /proc + PyMemoryEditor)
+  desktop/app.py         PySide6 native desktop application
   web/                   Flask app, templates, static assets
+packaging/insight.spec   PyInstaller build → Insight.exe
+.github/workflows/       Windows CI that builds and uploads the .exe
 samples/build_samples.py builds samples/demo.gsv
-tests/                   pytest suite (script + native + web)
+tests/                   pytest suite (script, native, web, game, live)
 ```
 
 ## Running the tests

@@ -18,8 +18,15 @@ dependencies = [
 [project.scripts]
 insight = "insight.cli:main"
 
+[project.gui-scripts]
+insight-desktop = "insight.desktop.app:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+gui = ["PySide6-Essentials>=6.5"]
+game = ["UnityPy>=1.20"]
+live = ["PyMemoryEditor>=2.0"]
+dev = ["pytest>=7.0", "pyinstaller>=6.0"]
+all = ["PySide6-Essentials>=6.5", "UnityPy>=1.20", "PyMemoryEditor>=2.0"]
 
 [tool.setuptools.packages.find]
 include = ["insight*"]
