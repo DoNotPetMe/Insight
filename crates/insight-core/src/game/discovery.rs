@@ -170,6 +170,52 @@ pub fn scan_dir_text_files(path: &Path, max_files: usize) -> Vec<Finding> {
     out
 }
 
+/// Scan the executables (.exe/.dll) in a game folder for embedded strings.
+///
+/// Many engines (e.g. Chrome Engine / Dying Light) pack level and script data
+/// into archives, so the loose file tree is sparse — but the engine binaries
+/// still contain level names, console commands and debug strings (often as
+/// UTF-16). Largest binaries are scanned first, within a byte budget.
+pub fn scan_executables(dir: &Path, max_exes: usize, byte_budget: u64) -> Vec<Finding> {
+    let mut exes: Vec<(std::path::PathBuf, u64)> = Vec::new();
+    for entry in WalkDir::new(dir).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let p = entry.path();
+        let is_exe = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e.to_lowercase().as_str(), "exe" | "dll"))
+            .unwrap_or(false);
+        if is_exe {
+            let sz = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            exes.push((p.to_path_buf(), sz));
+        }
+    }
+    exes.sort_by(|a, b| b.1.cmp(&a.1)); // largest first — that's the engine
+
+    let mut out = Vec::new();
+    let mut budget = byte_budget;
+    let mut count = 0;
+    for (p, sz) in exes {
+        if count >= max_exes || sz == 0 || sz > budget {
+            continue;
+        }
+        if let Ok(data) = std::fs::read(&p) {
+            budget = budget.saturating_sub(sz);
+            count += 1;
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let src = format!("exe:{name}");
+            let strings = crate::strings::scan_bytes_for_strings(&data, 5);
+            for s in &strings {
+                scan_text(s, &src, &mut out);
+            }
+        }
+    }
+    out
+}
+
 const MAX_FINDINGS: usize = 8000;
 
 /// De-duplicate, sort by descending score, and cap the result.

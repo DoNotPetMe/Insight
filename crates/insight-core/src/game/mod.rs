@@ -51,6 +51,9 @@ pub fn analyze_game(path: &Path, raw: Option<&[u8]>) -> GameReport {
     if path.is_dir() {
         findings.extend(discovery::scan_directory(path, 80_000));
         findings.extend(discovery::scan_dir_text_files(path, 6_000));
+        // engine binaries hold level names / console commands even when content
+        // is packed in archives (the common case for shipped games)
+        findings.extend(discovery::scan_executables(path, 8, 800 * 1024 * 1024));
     } else {
         if let Some(data) = raw {
             let strings = crate::strings::scan_bytes_for_strings(data, 4);

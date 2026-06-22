@@ -233,17 +233,24 @@ impl App {
                     ui.label(RichText::new("◢ INSIGHT").strong().size(16.0).color(Palette::ACCENT));
                     ui.add_space(8.0);
                     #[cfg(any(windows, target_os = "macos"))]
-                    if ui.button("Open…").clicked() {
+                    if ui.button("Open file…").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
                             self.begin_load(path, ctx);
                         }
                     }
+                    #[cfg(any(windows, target_os = "macos"))]
+                    if ui.button("Open game folder…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            self.begin_load(path, ctx);
+                        }
+                    }
                     let go = ui.add(egui::TextEdit::singleline(&mut self.path_input)
-                        .hint_text("path to a binary…  (or drop a file)")
-                        .desired_width(320.0))
+                        .hint_text("…or paste a path to a file or game folder")
+                        .desired_width(300.0))
                         .lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter));
                     if (ui.button("Load").clicked() || go) && !self.path_input.trim().is_empty() {
-                        self.begin_load(PathBuf::from(self.path_input.trim().to_string()), ctx);
+                        let p = self.path_input.trim().trim_matches('"').to_string();
+                        self.begin_load(PathBuf::from(p), ctx);
                     }
                     ui.separator();
                     if !self.file_name.is_empty() {
@@ -360,7 +367,16 @@ impl App {
 
             let Some(p) = project else {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Drop a game .exe / ELF / folder here, or use Open…").size(15.0).color(Palette::MUTED));
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(160.0);
+                        ui.label(RichText::new("Open a game to begin").size(18.0).color(Palette::TEXT));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("• “Open game folder…” — best for discovery (scans level names & scripts)").color(Palette::MUTED));
+                        ui.label(RichText::new("• “Open file…” — pick the game .exe to disassemble & decompile it").color(Palette::MUTED));
+                        ui.label(RichText::new("• or paste a path (right-click a folder ▸ Copy as path) and press Load").color(Palette::MUTED));
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Tip: if drag-and-drop does nothing, the app is likely running as Administrator — use the buttons above instead.").small().color(Palette::MUTED));
+                    });
                 });
                 return;
             };
