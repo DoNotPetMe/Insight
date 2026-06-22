@@ -158,6 +158,19 @@ mod tests {
     }
 
     #[test]
+    fn decompiler_recovers_if_structure() {
+        // xor eax,eax; test edi,edi; je +2; inc eax; ret
+        let code: &[u8] = &[0x31, 0xc0, 0x85, 0xff, 0x74, 0x02, 0xff, 0xc0, 0xc3];
+        let proj = Project::analyze(code, |_, _| {});
+        let func = proj.functions.iter().max_by_key(|f| f.insns.len()).unwrap();
+        let out = decompiler::decompile(func, &proj.program);
+        assert!(out.contains("if ("), "expected an if in:\n{out}");
+        assert!(out.contains("edi"), "condition should mention edi:\n{out}");
+        assert!(out.contains("eax++"), "expected inc lifted:\n{out}");
+        assert!(!out.contains("goto"), "structured output shouldn't need goto:\n{out}");
+    }
+
+    #[test]
     fn finds_strings() {
         let data = b"\x00\x00hello world\x00\x00";
         let prog = loader::load(data);

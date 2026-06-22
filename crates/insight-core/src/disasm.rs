@@ -60,6 +60,9 @@ pub fn disasm(data: &[u8], va: u64, bitness: u32) -> Vec<Insn> {
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_uppercase_hex(false);
     formatter.options_mut().set_space_after_operand_separator(true);
+    // use 0x-prefixed hex (e.g. [rbp-0x14], 0x1016) instead of iced's `14h`
+    formatter.options_mut().set_hex_prefix("0x");
+    formatter.options_mut().set_hex_suffix("");
 
     let mut out = Vec::new();
     let mut instr = Instruction::default();

@@ -61,7 +61,7 @@ pub fn analyze_game(path: &Path, raw: Option<&[u8]>) -> GameReport {
         }
         // the dev rooms / test maps usually live as files around the .exe
         if let Some(parent) = path.parent() {
-            if parent.as_os_str().len() > 0 {
+            if !parent.as_os_str().is_empty() {
                 findings.extend(discovery::scan_directory(parent, 80_000));
             }
         }
