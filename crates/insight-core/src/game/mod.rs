@@ -54,6 +54,8 @@ pub fn analyze_game(path: &Path, raw: Option<&[u8]>) -> GameReport {
         // engine binaries hold level names / console commands even when content
         // is packed in archives (the common case for shipped games)
         findings.extend(discovery::scan_executables(path, 8, 800 * 1024 * 1024));
+        // and look *inside* ZIP-based archives (Chrome Engine .pak, .pk3, …)
+        findings.extend(discovery::scan_archives(path, 80, 400_000, 3_000));
     } else {
         if let Some(data) = raw {
             let strings = crate::strings::scan_bytes_for_strings(data, 4);

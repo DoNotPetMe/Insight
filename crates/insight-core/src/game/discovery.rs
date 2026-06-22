@@ -216,6 +216,70 @@ pub fn scan_executables(dir: &Path, max_exes: usize, byte_budget: u64) -> Vec<Fi
     out
 }
 
+/// Scan inside ZIP-based game archives (Chrome Engine dataN.pak, Quake/Doom
+/// .pk3, plain .zip) for entry names and small text-entry contents — this is
+/// where packed games keep their level and script names. Archives that aren't
+/// ZIP (Unreal/Godot custom formats) are skipped silently.
+pub fn scan_archives(dir: &Path, max_archives: usize, name_budget: usize, text_budget: usize) -> Vec<Finding> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let mut archives = 0usize;
+    let mut names_scanned = 0usize;
+    let mut text_read = 0usize;
+
+    for entry in WalkDir::new(dir).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+        if archives >= max_archives || names_scanned >= name_budget {
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let p = entry.path();
+        let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
+        let Some(ext) = ext else { continue };
+        if !matches!(ext.as_str(), "pak" | "pk3" | "pk4" | "zip" | "pkz" | "obb") {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(p) else { continue };
+        let Ok(mut zip) = zip::ZipArchive::new(file) else { continue }; // not a ZIP
+        archives += 1;
+        let arch = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let src = format!("pak:{arch}");
+
+        let names: Vec<String> = zip.file_names().map(|s| s.to_string()).collect();
+        for name in &names {
+            if names_scanned >= name_budget {
+                break;
+            }
+            names_scanned += 1;
+            scan_text(name, &src, &mut out);
+        }
+        for name in &names {
+            if text_read >= text_budget {
+                break;
+            }
+            let low = name.to_lowercase();
+            if !TEXT_EXTS.iter().any(|e| low.ends_with(&format!(".{e}"))) {
+                continue;
+            }
+            if let Ok(mut zf) = zip.by_name(name) {
+                if zf.size() > MAX_TEXT_FILE_BYTES {
+                    continue;
+                }
+                let mut buf = Vec::new();
+                if zf.read_to_end(&mut buf).is_ok() {
+                    text_read += 1;
+                    let esrc = format!("{src} ▸ {name}");
+                    for line in String::from_utf8_lossy(&buf).lines() {
+                        scan_text(line, &esrc, &mut out);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 const MAX_FINDINGS: usize = 8000;
 
 // Substrings that mark a finding as third-party middleware/SDK noise rather

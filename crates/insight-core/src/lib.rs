@@ -6,6 +6,7 @@ pub mod analysis;
 pub mod decompiler;
 pub mod disasm;
 pub mod game;
+pub mod launch;
 pub mod live;
 pub mod loader;
 pub mod strings;
@@ -119,6 +120,31 @@ mod tests {
             assert!(cats.contains(c), "missing {c} in {cats:?}");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scans_inside_zip_pak_archives() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("insight_pak_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // a Chrome-Engine-style data0.pak is a ZIP archive
+        let pak = dir.join("data0.pak");
+        let mut zw = zip::ZipWriter::new(std::fs::File::create(&pak).unwrap());
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("levels/dev_room_secret.scr", opts).unwrap();
+        zw.write_all(b"// nothing").unwrap();
+        zw.start_file("scripts/devtools.scr", opts).unwrap();
+        zw.write_all(b"// TODO: hide the debug menu\nspawn_item god_mode\n").unwrap();
+        zw.finish().unwrap();
+
+        let found = game::discovery::report(game::discovery::scan_archives(&dir, 10, 100000, 100));
+        let cats: std::collections::HashSet<_> = found.iter().map(|f| f.category.clone()).collect();
+        assert!(cats.contains("dev_room"), "name inside pak: {cats:?}");
+        assert!(cats.contains("dev_line") || cats.contains("debug"), "content inside pak: {cats:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

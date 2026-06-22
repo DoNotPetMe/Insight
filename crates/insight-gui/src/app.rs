@@ -62,6 +62,13 @@ pub struct App {
     disc_cats: std::collections::HashSet<String>,
     disc_note: String,
 
+    // launch/load state
+    loaded_path: Option<PathBuf>,
+    game_exe: Option<PathBuf>,
+    launch_args: String,
+    launch_for: Option<usize>,
+    launch_note: String,
+
     // live-scan state
     procs: Vec<ProcInfo>,
     proc_filter: String,
@@ -99,6 +106,11 @@ impl App {
             disc_selected: None,
             disc_cats: std::collections::HashSet::new(),
             disc_note: String::new(),
+            loaded_path: None,
+            game_exe: None,
+            launch_args: String::new(),
+            launch_for: None,
+            launch_note: String::new(),
             procs: Vec::new(),
             proc_filter: String::new(),
             selected_pid: None,
@@ -124,7 +136,22 @@ impl App {
         self.selected = None;
         self.project = None;
         self.game = None;
+        self.disc_selected = None;
+        self.launch_for = None;
+        self.game_exe = None;
+        self.loaded_path = Some(path.clone());
         self.rx = Some(spawn_load(path, ctx.clone()));
+    }
+
+    fn detect_game_exe(&mut self) {
+        let Some(path) = self.loaded_path.clone() else { return };
+        self.game_exe = if path.is_dir() {
+            insight_core::launch::find_game_exe(&path)
+        } else if path.extension().map(|e| e.eq_ignore_ascii_case("exe")).unwrap_or(false) {
+            Some(path)
+        } else {
+            path.parent().and_then(insight_core::launch::find_game_exe)
+        };
     }
 
     fn poll_scan(&mut self) {
@@ -149,6 +176,7 @@ impl App {
 
     fn poll(&mut self) {
         let mut finished = false;
+        let mut did_load = false;
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -175,6 +203,7 @@ impl App {
                         self.game = Some(loaded.game);
                         self.loading = false;
                         finished = true;
+                        did_load = true;
                     }
                     Msg::Error(e) => {
                         self.error = Some(e);
@@ -186,6 +215,9 @@ impl App {
         }
         if finished {
             self.rx = None;
+        }
+        if did_load {
+            self.detect_game_exe();
         }
     }
 
@@ -710,7 +742,8 @@ impl App {
         let row_h = ui.text_style_height(&TextStyle::Body) + 8.0;
         let mut clicked: Option<usize> = None;
         // leave room at the bottom for the selected-finding detail/actions panel
-        let list_h = (ui.available_height() - 96.0).max(120.0);
+        let reserve = if self.disc_selected.is_some() { 156.0 } else { 40.0 };
+        let list_h = (ui.available_height() - reserve).max(120.0);
         egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show_rows(ui, row_h, visible.len(), |ui, range| {
             for vi in range {
                 let i = visible[vi];
@@ -741,7 +774,7 @@ impl App {
 
         // detail / actions for the selected finding
         if let Some(i) = self.disc_selected {
-            if let Some(f) = g.discovery.get(i) {
+            if let Some(f) = g.discovery.get(i).cloned() {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Copy").clicked() {
@@ -750,9 +783,63 @@ impl App {
                     }
                     ui.label(RichText::new(&f.text).monospace().color(Palette::STR));
                 });
-                if insight_core::game::looks_actionable(f) {
+
+                if insight_core::game::looks_actionable(&f) {
                     let eng = g.best().map(|d| d.engine_id.clone()).unwrap_or_default();
-                    ui.label(RichText::new(load_hint(&eng, &f.text)).small().color(Palette::MUTED));
+                    let plan = insight_core::launch::plan(&eng, self.game_exe.clone(), &f.text);
+
+                    // (re)initialise the editable args when the selection changes
+                    if self.launch_for != Some(i) {
+                        self.launch_args = plan.args.join(" ");
+                        self.launch_for = Some(i);
+                        self.launch_note.clear();
+                    }
+
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(&plan.note).small().color(Palette::MUTED));
+
+                    // console command
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy console cmd").clicked() {
+                            ui.ctx().copy_text(plan.console_cmd.clone());
+                            self.launch_note = "console command copied".into();
+                        }
+                        ui.label(RichText::new(&plan.console_cmd).monospace().color(Palette::MN_JUMP));
+                    });
+
+                    // launch row
+                    ui.horizontal(|ui| {
+                        let exe_label = self.game_exe.as_ref()
+                            .and_then(|p| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "no game .exe found".into());
+                        ui.label(RichText::new(format!("Game: {exe_label}")).small().color(Palette::TEXT));
+                        #[cfg(any(windows, target_os = "macos"))]
+                        if ui.button("Pick .exe…").clicked() {
+                            if let Some(p) = rfd::FileDialog::new().add_filter("exe", &["exe"]).pick_file() {
+                                self.game_exe = Some(p);
+                            }
+                        }
+                    });
+                    if plan.can_launch {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("args:").small().color(Palette::MUTED));
+                            ui.add(egui::TextEdit::singleline(&mut self.launch_args).desired_width(300.0).font(TextStyle::Monospace));
+                            let ready = self.game_exe.is_some();
+                            if ui.add_enabled(ready, egui::Button::new("▶ Launch game")).clicked() {
+                                if let Some(exe) = self.game_exe.clone() {
+                                    let args: Vec<String> = self.launch_args.split_whitespace().map(|s| s.to_string()).collect();
+                                    self.launch_note = match insight_core::launch::launch(&exe, &args) {
+                                        Ok(_) => "launched".into(),
+                                        Err(e) => e,
+                                    };
+                                }
+                            }
+                        });
+                    }
+                    if !self.launch_note.is_empty() {
+                        ui.label(RichText::new(&self.launch_note).small().color(Palette::ACCENT));
+                    }
                 }
             }
         }
@@ -782,18 +869,6 @@ fn export_findings(findings: &[insight_core::game::Finding]) -> String {
             Ok(_) => format!("saved {}", path.display()),
             Err(e) => format!("save failed: {e}"),
         }
-    }
-}
-
-fn load_hint(engine_id: &str, name: &str) -> String {
-    match engine_id {
-        "chrome" => format!("Chrome Engine: try loading “{name}” from the in-game developer console, or open it in ChromED (Dying Light Developer Tools)."),
-        "unity" => format!("Unity: load with SceneManager.LoadScene(\"{name}\") via a BepInEx/mod, or select it in the scene list."),
-        "unreal" => format!("Unreal: open the console (~) and run:  open {name}"),
-        "source" => format!("Source: open the console (~) and run:  map {name}"),
-        "godot" => format!("Godot: change_scene_to_file(\"res://{name}\") from a mod script."),
-        "gamemaker" => format!("GameMaker: room_goto to “{name}” via an UndertaleModTool patch."),
-        _ => format!("Try loading “{name}” through the game's developer console or mod tools."),
     }
 }
 
