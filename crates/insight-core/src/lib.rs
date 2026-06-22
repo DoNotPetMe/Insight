@@ -9,6 +9,7 @@ pub mod game;
 pub mod launch;
 pub mod live;
 pub mod loader;
+pub mod mods;
 pub mod strings;
 
 pub use analysis::{analyze, Analysis, Function};
@@ -120,6 +121,35 @@ mod tests {
             assert!(cats.contains(c), "missing {c} in {cats:?}");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mod_workshop_roundtrip() {
+        let game = std::env::temp_dir().join(format!("insight_mods_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game);
+        std::fs::create_dir_all(&game).unwrap();
+
+        let proj = mods::new_mod_project(&game, "My Cool Mod").unwrap();
+        std::fs::write(proj.join("data").join("level.scr"), b"hi").unwrap();
+
+        let listed = mods::list_mods(&game);
+        assert_eq!(listed.len(), 1);
+        let m = &listed[0];
+        assert_eq!(m.name, "My_Cool_Mod");
+        assert!(!m.enabled && m.built_pak.is_none());
+
+        let pak = mods::build_mod(&game, m, "chrome").unwrap();
+        assert!(pak.exists() && pak.extension().unwrap() == "pak");
+        // it's a real ZIP containing our file
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&pak).unwrap()).unwrap();
+        assert!(z.by_name("level.scr").is_ok());
+
+        let disabled = mods::set_enabled(&pak, false).unwrap();
+        assert!(disabled.to_string_lossy().ends_with(".disabled"));
+        let relisted = mods::list_mods(&game);
+        assert!(!relisted[0].enabled && relisted[0].built_pak.is_some());
+
+        let _ = std::fs::remove_dir_all(&game);
     }
 
     #[test]

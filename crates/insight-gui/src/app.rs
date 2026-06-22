@@ -32,7 +32,15 @@ enum CenterTab {
     Hex,
     Game,
     Discovery,
+    Launch,
     Live,
+}
+
+#[derive(Clone)]
+struct Pin {
+    text: String,
+    category: String,
+    source: String,
 }
 
 pub struct App {
@@ -68,6 +76,17 @@ pub struct App {
     launch_args: String,
     launch_for: Option<usize>,
     launch_note: String,
+    dev_args: String,
+    dev_args_for: String,
+
+    // pinned items (persist across screens and restarts)
+    pins: Vec<Pin>,
+
+    // mod workshop
+    mods: Vec<insight_core::mods::ModInfo>,
+    mods_loaded_for: Option<PathBuf>,
+    new_mod_name: String,
+    mod_note: String,
 
     // live-scan state
     procs: Vec<ProcInfo>,
@@ -111,6 +130,13 @@ impl App {
             launch_args: String::new(),
             launch_for: None,
             launch_note: String::new(),
+            dev_args: String::new(),
+            dev_args_for: String::new(),
+            pins: load_pins(),
+            mods: Vec::new(),
+            mods_loaded_for: None,
+            new_mod_name: String::new(),
+            mod_note: String::new(),
             procs: Vec::new(),
             proc_filter: String::new(),
             selected_pid: None,
@@ -258,6 +284,7 @@ impl eframe::App for App {
         self.top_bar(ctx);
         self.status_bar(ctx, project.as_ref());
         self.left_panel(ctx, project.as_ref());
+        self.pins_panel(ctx, game.as_ref());
         self.central_panel(ctx, project.as_ref(), game.as_ref());
 
         self.project = project;
@@ -407,6 +434,7 @@ impl App {
                 ui.add_space(6.0);
                 tab(ui, &mut self.center_tab, CenterTab::Game, "Game");
                 tab(ui, &mut self.center_tab, CenterTab::Discovery, "Discovery");
+                tab(ui, &mut self.center_tab, CenterTab::Launch, "Launch & Mods");
                 tab(ui, &mut self.center_tab, CenterTab::Live, "Live");
             });
             ui.separator();
@@ -415,6 +443,7 @@ impl App {
             match self.center_tab {
                 CenterTab::Game => return game_view(ui, game),
                 CenterTab::Discovery => return self.discovery_view(ui, ctx, game),
+                CenterTab::Launch => return self.launch_view(ui, game),
                 CenterTab::Live => return self.live_view(ui, ctx),
                 _ => {}
             }
@@ -781,6 +810,11 @@ impl App {
                         ui.ctx().copy_text(f.text.clone());
                         self.disc_note = "copied".into();
                     }
+                    let pinned = self.pins.iter().any(|p| p.text == f.text);
+                    if ui.add_enabled(!pinned, egui::Button::new("📌 Pin")).clicked() {
+                        self.pins.push(Pin { text: f.text.clone(), category: f.category.clone(), source: f.source.clone() });
+                        save_pins(&self.pins);
+                    }
                     ui.label(RichText::new(&f.text).monospace().color(Palette::STR));
                 });
 
@@ -844,6 +878,281 @@ impl App {
             }
         }
     }
+}
+
+impl App {
+    fn game_dir(&self) -> Option<PathBuf> {
+        let p = self.loaded_path.clone()?;
+        if p.is_dir() { Some(p) } else { p.parent().map(|x| x.to_path_buf()) }
+    }
+
+    fn engine_id(&self, game: Option<&GameReport>) -> String {
+        game.and_then(|g| g.best()).map(|d| d.engine_id.clone()).unwrap_or_default()
+    }
+
+    fn pins_panel(&mut self, ctx: &egui::Context, game: Option<&GameReport>) {
+        let engine = self.engine_id(game);
+        let exe = self.game_exe.clone();
+        let pins = self.pins.clone();
+        let mut remove: Option<usize> = None;
+        let mut note: Option<String> = None;
+
+        egui::SidePanel::right("pins").resizable(true).default_width(248.0).width_range(180.0..=420.0).show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("📌 Pinned").strong().color(Palette::ACCENT));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !pins.is_empty() && ui.small_button("clear").clicked() {
+                        remove = Some(usize::MAX);
+                    }
+                });
+            });
+            ui.separator();
+            if pins.is_empty() {
+                ui.add_space(8.0);
+                ui.label(RichText::new("Pin findings (📌 in Discovery) to track them here — they stay on every screen.").small().color(Palette::MUTED));
+                return;
+            }
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                for (i, p) in pins.iter().enumerate() {
+                    egui::Frame::none().fill(Palette::PANEL2).rounding(5.0).inner_margin(6.0).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&p.category).small().strong().color(Palette::MN_RET));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.small_button("✕").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        });
+                        ui.label(RichText::new(&p.text).monospace().small().color(Palette::STR));
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Copy").clicked() {
+                                ui.ctx().copy_text(p.text.clone());
+                            }
+                            let f = insight_core::game::Finding { category: p.category.clone(), score: 0, text: p.text.clone(), source: p.source.clone(), matched: String::new() };
+                            if insight_core::game::looks_actionable(&f) {
+                                if let Some(e) = &exe {
+                                    let plan = insight_core::launch::plan(&engine, Some(e.clone()), &p.text);
+                                    if plan.can_launch && ui.small_button("▶ load").clicked() {
+                                        note = Some(match insight_core::launch::launch(e, &plan.args) {
+                                            Ok(_) => "launched".into(),
+                                            Err(err) => err,
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+        });
+
+        match remove {
+            Some(usize::MAX) => { self.pins.clear(); save_pins(&self.pins); }
+            Some(i) => { self.pins.remove(i); save_pins(&self.pins); }
+            None => {}
+        }
+        if let Some(n) = note {
+            self.launch_note = n;
+        }
+    }
+
+    fn launch_view(&mut self, ui: &mut egui::Ui, game: Option<&GameReport>) {
+        let engine = self.engine_id(game);
+        let game_dir = self.game_dir();
+
+        // refresh mod list when the target changes
+        if self.mods_loaded_for != game_dir {
+            self.mods = game_dir.as_ref().map(|d| insight_core::mods::list_mods(d)).unwrap_or_default();
+            self.mods_loaded_for = game_dir.clone();
+        }
+
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            // ---- launch the game with dev tools ----
+            ui.add_space(6.0);
+            ui.label(RichText::new("Launch game").size(15.0).strong().color(Palette::ACCENT));
+            if self.dev_args_for != engine {
+                self.dev_args = dev_args_default(&engine).to_string();
+                self.dev_args_for = engine.clone();
+            }
+            ui.horizontal(|ui| {
+                let exe = self.game_exe.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "no game .exe detected".into());
+                ui.label(RichText::new(format!("Executable: {exe}")).color(Palette::TEXT));
+                #[cfg(any(windows, target_os = "macos"))]
+                if ui.button("Pick .exe…").clicked() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter("exe", &["exe"]).pick_file() {
+                        self.game_exe = Some(p);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("dev args:").small().color(Palette::MUTED));
+                ui.add(egui::TextEdit::singleline(&mut self.dev_args).desired_width(320.0).font(TextStyle::Monospace));
+                if ui.add_enabled(self.game_exe.is_some(), egui::Button::new("▶ Launch with dev tools")).clicked() {
+                    if let Some(e) = self.game_exe.clone() {
+                        let args: Vec<String> = self.dev_args.split_whitespace().map(|s| s.to_string()).collect();
+                        self.launch_note = match insight_core::launch::launch(&e, &args) {
+                            Ok(_) => "launched".into(),
+                            Err(err) => err,
+                        };
+                    }
+                }
+            });
+            if !self.launch_note.is_empty() {
+                ui.label(RichText::new(&self.launch_note).small().color(Palette::ACCENT));
+            }
+
+            // ---- toolbox ----
+            ui.add_space(12.0);
+            ui.label(RichText::new("Tools").size(15.0).strong().color(Palette::ACCENT));
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Decompiler").clicked() { self.center_tab = CenterTab::Pseudocode; }
+                if ui.button("Disassembler").clicked() { self.center_tab = CenterTab::Disassembly; }
+                if ui.button("Discovery").clicked() { self.center_tab = CenterTab::Discovery; }
+                if ui.button("Memory scanner").clicked() { self.center_tab = CenterTab::Live; }
+            });
+            if let Some(eng) = game.and_then(|g| g.engine()) {
+                if !eng.tools.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Game-available tools:").small().color(Palette::MUTED));
+                    for t in eng.tools {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("· {}", t.name)).color(Palette::TEXT));
+                            ui.hyperlink_to(RichText::new("open").small().color(Palette::ACCENT), t.url);
+                        });
+                    }
+                }
+            }
+
+            // ---- mod workshop ----
+            ui.add_space(12.0);
+            ui.label(RichText::new("Mods").size(15.0).strong().color(Palette::ACCENT));
+            let Some(gdir) = game_dir.clone() else {
+                ui.label(RichText::new("Open a game folder to make and manage mods.").small().color(Palette::MUTED));
+                return;
+            };
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.new_mod_name).hint_text("new mod name…").desired_width(180.0));
+                if ui.button("＋ New mod").clicked() {
+                    match insight_core::mods::new_mod_project(&gdir, &self.new_mod_name) {
+                        Ok(p) => { self.mod_note = format!("created {}", p.display()); self.new_mod_name.clear(); self.mods_loaded_for = None; }
+                        Err(e) => self.mod_note = e,
+                    }
+                }
+                if ui.button("Open mods folder").clicked() {
+                    open_path(&insight_core::mods::mods_dir(&gdir));
+                }
+            });
+            ui.label(RichText::new(insight_core::mods::install_hint(&engine)).small().color(Palette::MUTED));
+            if !self.mod_note.is_empty() {
+                ui.label(RichText::new(&self.mod_note).small().color(Palette::ACCENT));
+            }
+            ui.separator();
+
+            let mods = self.mods.clone();
+            if mods.is_empty() {
+                ui.label(RichText::new("No mods yet — create one above.").small().color(Palette::MUTED));
+            }
+            for m in &mods {
+                egui::Frame::none().fill(Palette::PANEL2).rounding(5.0).inner_margin(7.0).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&m.name).strong().color(Palette::TEXT));
+                        ui.label(RichText::new(format!("{} files", m.files)).small().color(Palette::MUTED));
+                        if m.built_pak.is_some() {
+                            let tag = if m.enabled { "● enabled" } else { "○ disabled" };
+                            let col = if m.enabled { Palette::MN_JUMP } else { Palette::MUTED };
+                            ui.label(RichText::new(tag).small().color(col));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Build").clicked() {
+                            match insight_core::mods::build_mod(&gdir, m, &engine) {
+                                Ok(p) => self.mod_note = format!("built {}", p.display()),
+                                Err(e) => self.mod_note = e,
+                            }
+                            self.mods_loaded_for = None;
+                        }
+                        if ui.button("Edit files").clicked() {
+                            open_path(&m.project_dir);
+                        }
+                        if let Some(pak) = &m.built_pak {
+                            let mut en = m.enabled;
+                            if ui.checkbox(&mut en, "enabled").changed() {
+                                if let Err(e) = insight_core::mods::set_enabled(pak, en) { self.mod_note = e; }
+                                self.mods_loaded_for = None;
+                            }
+                            #[cfg(any(windows, target_os = "macos"))]
+                            if ui.button("Install…").clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    match insight_core::mods::install_to(pak, &dir) {
+                                        Ok(p) => self.mod_note = format!("installed → {}", p.display()),
+                                        Err(e) => self.mod_note = e,
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+    }
+}
+
+fn open_path(path: &std::path::Path) {
+    let _ = std::fs::create_dir_all(path);
+    #[cfg(windows)]
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+fn dev_args_default(engine_id: &str) -> &'static str {
+    match engine_id {
+        "chrome" => "-DEVELOPER",
+        "source" => "-console -dev +sv_cheats 1",
+        "unreal" => "-log",
+        "idtech" => "+developer 1",
+        "godot" => "--verbose",
+        _ => "",
+    }
+}
+
+fn config_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("APPDATA") {
+        return PathBuf::from(d).join("Insight");
+    }
+    if let Ok(h) = std::env::var("HOME") {
+        return PathBuf::from(h).join(".config").join("insight");
+    }
+    PathBuf::from(".")
+}
+
+fn pins_path() -> PathBuf {
+    config_dir().join("pins.tsv")
+}
+
+fn load_pins() -> Vec<Pin> {
+    let Ok(data) = std::fs::read_to_string(pins_path()) else { return Vec::new() };
+    data.lines()
+        .filter_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            Some(Pin {
+                category: it.next()?.to_string(),
+                source: it.next()?.to_string(),
+                text: it.next()?.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn save_pins(pins: &[Pin]) {
+    let _ = std::fs::create_dir_all(config_dir());
+    let body: String = pins.iter().map(|p| format!("{}\t{}\t{}\n", p.category, p.source, p.text)).collect();
+    let _ = std::fs::write(pins_path(), body);
 }
 
 fn export_findings(findings: &[insight_core::game::Finding]) -> String {
