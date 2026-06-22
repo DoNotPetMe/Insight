@@ -78,6 +78,14 @@ pub static ENGINES: &[Engine] = &[
         tools: &[tool!("RPG Maker MV/MZ decrypter", "https://github.com/Petschko/Java-RPG-Maker-MV-Decrypter", "assets")],
     },
     Engine {
+        id: "chrome",
+        name: "Chrome Engine (Techland)",
+        runtime: "Native C++; content in numbered dataN.pak archives plus .scr scripts",
+        support: "Native disassembler on the engine binary; pak/.scr listing. Techland \
+                  ships official mod tools (ChromED / Developer Tools) for some titles.",
+        tools: &[tool!("Dying Light Developer Tools (ChromED)", "https://store.steampowered.com/app/352380/", "both")],
+    },
+    Engine {
         id: "source",
         name: "Source Engine",
         runtime: "Native C++; content in .vpk, maps in .bsp",

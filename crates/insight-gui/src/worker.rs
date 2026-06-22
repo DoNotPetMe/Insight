@@ -28,9 +28,9 @@ pub fn spawn_load(path: PathBuf, repaint: egui::Context) -> Receiver<Msg> {
     let (tx, rx) = channel();
     thread::spawn(move || {
         if path.is_dir() {
-            let _ = tx.send(Msg::Progress(0.3, "detecting engine".into()));
+            let _ = tx.send(Msg::Progress(0.3, "scanning game folder".into()));
             repaint.request_repaint();
-            let game = analyze_game(&path, &[]);
+            let game = analyze_game(&path, None);
             let _ = tx.send(Msg::Done(Box::new(Loaded { project: None, game }), path));
         } else {
             match std::fs::read(&path) {
@@ -41,11 +41,9 @@ pub fn spawn_load(path: PathBuf, repaint: egui::Context) -> Receiver<Msg> {
                         let _ = tx2.send(Msg::Progress(frac * 0.9, status.to_string()));
                         ctx.request_repaint();
                     });
-                    let _ = tx.send(Msg::Progress(0.92, "detecting engine".into()));
+                    let _ = tx.send(Msg::Progress(0.92, "detecting engine & scanning content".into()));
                     repaint.request_repaint();
-                    let strings: Vec<String> =
-                        project.strings.iter().map(|s| s.value.clone()).collect();
-                    let game = analyze_game(&path, &strings);
+                    let game = analyze_game(&path, Some(&data));
                     let _ = tx.send(Msg::Done(
                         Box::new(Loaded { project: Some(project), game }),
                         path,

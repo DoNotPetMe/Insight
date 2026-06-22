@@ -14,7 +14,7 @@ pub use analysis::{analyze, Analysis, Function};
 pub use decompiler::{decompile, decompile_lines};
 pub use disasm::{Flow, Insn};
 pub use loader::{Arch, Program, Segment, Symbol};
-pub use strings::{find_strings, FoundString};
+pub use strings::{find_strings, scan_bytes_for_strings, FoundString};
 
 /// A fully analysed target: everything the UI needs to render.
 pub struct Project {
@@ -80,6 +80,45 @@ mod tests {
         assert_eq!(d[0].engine_id, "gamescript");
         let g = game::detect::detect_bytes(b"GDPC\x01\x00", "x.pck");
         assert_eq!(g[0].engine_id, "godot");
+    }
+
+    #[test]
+    fn extracts_ascii_and_utf16_strings() {
+        // ASCII marker, then "DEVROOM" as UTF-16LE (double-null separated)
+        let mut data = b"junk\x00\x01load_test_map\x00\x00".to_vec();
+        for c in b"DEVROOM" {
+            data.push(*c);
+            data.push(0);
+        }
+        let strings = strings::scan_bytes_for_strings(&data, 4);
+        assert!(strings.iter().any(|s| s == "load_test_map"));
+        assert!(strings.iter().any(|s| s == "DEVROOM"), "should find UTF-16 string in {strings:?}");
+    }
+
+    #[test]
+    fn analyze_game_directory_finds_content_and_chrome() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("insight_game_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("levels")).unwrap();
+        // Chrome Engine signature
+        fs::write(dir.join("data0.pak"), b"x").unwrap();
+        fs::write(dir.join("data1.pak"), b"x").unwrap();
+        // discoverable filenames
+        fs::write(dir.join("levels").join("test_level_01.scr"), b"").unwrap();
+        fs::write(dir.join("levels").join("dev_room.scr"), b"").unwrap();
+        fs::write(dir.join("levels").join("unused_boss_OLD.msh"), b"").unwrap();
+        // dev line inside a text file
+        fs::write(dir.join("notes.txt"), b"// TODO: remove this debug menu before ship\n").unwrap();
+
+        let rep = game::analyze_game(&dir, None);
+        assert_eq!(rep.best().map(|d| d.engine_id.as_str()), Some("chrome"));
+        let cats: std::collections::HashSet<_> =
+            rep.discovery.iter().map(|f| f.category.clone()).collect();
+        for c in ["test_map", "dev_room", "unused", "dev_line", "debug"] {
+            assert!(cats.contains(c), "missing {c} in {cats:?}");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

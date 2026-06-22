@@ -125,6 +125,30 @@ pub fn detect_dir(path: &Path) -> Vec<Detection> {
         out.push(Detection { engine_id: "unreal".into(), name: name_of("unreal"), confidence: conf, evidence: ue, variant: String::new() });
     }
 
+    // Chrome Engine (Techland) — numbered dataN.pak archives, optional known exes
+    let chrome_paks = entries
+        .iter()
+        .filter(|e| {
+            let l = e.to_lowercase();
+            l.starts_with("data") && l.ends_with(".pak") && l[4..l.len() - 4].chars().all(|c| c.is_ascii_digit()) && l.len() > 8
+        })
+        .count();
+    let chrome_exe = entries.iter().any(|e| {
+        let l = e.to_lowercase();
+        l.contains("dyinglight") || l == "engine_x64_rwdi.exe" || l.contains("chrome")
+    });
+    if chrome_paks > 0 || chrome_exe {
+        let mut ev = Vec::new();
+        if chrome_paks > 0 {
+            ev.push(format!("{chrome_paks} dataN.pak archive(s)"));
+        }
+        if chrome_exe {
+            ev.push("Chrome Engine executable".into());
+        }
+        let conf = if chrome_paks > 0 && chrome_exe { 0.9 } else { 0.7 };
+        out.push(Detection { engine_id: "chrome".into(), name: name_of("chrome"), confidence: conf, evidence: ev, variant: String::new() });
+    }
+
     // GameMaker
     if entries.iter().any(|e| matches!(e.to_lowercase().as_str(), "data.win" | "game.unx" | "game.ios")) || has("audiogroup") {
         out.push(det("gamemaker", 0.85, "data.win / audiogroup*.dat"));
