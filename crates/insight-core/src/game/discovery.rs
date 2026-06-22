@@ -218,9 +218,59 @@ pub fn scan_executables(dir: &Path, max_exes: usize, byte_budget: u64) -> Vec<Fi
 
 const MAX_FINDINGS: usize = 8000;
 
-/// De-duplicate, sort by descending score, and cap the result.
+// Substrings that mark a finding as third-party middleware/SDK noise rather
+// than game content (Epic Online Services, FMOD, licences, URLs, …).
+const NOISE_TEXT: &[&str] = &[
+    "epicgames", "eos_", "eossdk", "fmod", "license", "copyright", "derivativ",
+    "redistribut", "errors.com", "://", "openssl", "zlib", "libcurl", "sandbox_id",
+    "invalid_sandbox", "sandbox_not_allowed", "sandbox_at_capacity", "missing_permission",
+    "query mods", "$sandbox", "www.", "(c)", "all rights reserved",
+];
+const NOISE_SOURCE: &[&str] = &[
+    "eossdk", "fmod", "steam_api", "openssl", "third_party", "crashpad",
+    "d3dcompiler", "amd_ags", "nvngx", "galaxy", "discord",
+];
+
+/// True if a finding is almost certainly middleware/SDK noise, not game content.
+pub fn is_noise(f: &Finding) -> bool {
+    let t = f.text.to_lowercase();
+    if NOISE_TEXT.iter().any(|n| t.contains(n)) {
+        return true;
+    }
+    let s = f.source.to_lowercase();
+    NOISE_SOURCE.iter().any(|n| s.contains(n))
+}
+
+/// True if a finding looks like a loadable map/level/asset identifier — the
+/// kind of thing worth trying to load into the game.
+pub fn looks_actionable(f: &Finding) -> bool {
+    let t = f.text.to_lowercase();
+    let exty = [".map", ".scr", ".lvl", ".lua", ".pak", ".unity", ".umap", ".level"]
+        .iter()
+        .any(|e| t.ends_with(e));
+    let pathy = t.contains('/') || t.contains('\\');
+    let mapy = (t.contains("map") || t.contains("level") || t.contains("demo")
+        || t.contains("scene") || t.contains("world") || t.contains("_ot_") || t.contains("arena"))
+        && f.text.len() < 70
+        && f.text.split_whitespace().count() <= 2;
+    matches!(f.category.as_str(), "dev_room" | "test_map" | "unused" | "secret" | "beta")
+        && (exty || pathy || mapy)
+}
+
+fn rank(f: &Finding) -> i32 {
+    let mut r = f.score as i32 * 3;
+    if looks_actionable(f) {
+        r += 30;
+    }
+    if is_noise(f) {
+        r -= 25;
+    }
+    r
+}
+
+/// De-duplicate, rank (real content first, noise last) and cap the result.
 pub fn report(mut findings: Vec<Finding>) -> Vec<Finding> {
-    findings.sort_by(|a, b| b.score.cmp(&a.score));
+    findings.sort_by(|a, b| rank(b).cmp(&rank(a)).then(b.score.cmp(&a.score)));
     let mut seen = HashSet::new();
     findings.retain(|f| seen.insert((f.category.clone(), f.text.clone(), f.source.clone())));
     findings.truncate(MAX_FINDINGS);

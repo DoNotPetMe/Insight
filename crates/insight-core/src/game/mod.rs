@@ -8,7 +8,7 @@ pub mod engines;
 use std::path::Path;
 
 pub use detect::Detection;
-pub use discovery::Finding;
+pub use discovery::{is_noise, looks_actionable, Finding};
 pub use engines::{Engine, Tool};
 
 pub struct GameReport {

@@ -55,6 +55,13 @@ pub struct App {
 
     game: Option<GameReport>,
 
+    // discovery view state
+    disc_filter: String,
+    disc_hide_noise: bool,
+    disc_selected: Option<usize>,
+    disc_cats: std::collections::HashSet<String>,
+    disc_note: String,
+
     // live-scan state
     procs: Vec<ProcInfo>,
     proc_filter: String,
@@ -87,6 +94,11 @@ impl App {
             addr_to_func: HashMap::new(),
             pending_load: std::env::args().nth(1).map(PathBuf::from),
             game: None,
+            disc_filter: String::new(),
+            disc_hide_noise: true,
+            disc_selected: None,
+            disc_cats: std::collections::HashSet::new(),
+            disc_note: String::new(),
             procs: Vec::new(),
             proc_filter: String::new(),
             selected_pid: None,
@@ -207,15 +219,17 @@ impl eframe::App for App {
             self.begin_load(p, ctx);
         }
 
-        // move the project out so panels can mutate `self` freely (no borrow clash)
+        // move project/game out so panels can mutate `self` freely (no clash)
         let project = self.project.take();
+        let game = self.game.take();
 
         self.top_bar(ctx);
         self.status_bar(ctx, project.as_ref());
         self.left_panel(ctx, project.as_ref());
-        self.central_panel(ctx, project.as_ref());
+        self.central_panel(ctx, project.as_ref(), game.as_ref());
 
         self.project = project;
+        self.game = game;
 
         if self.loading {
             ctx.request_repaint();
@@ -349,7 +363,7 @@ impl App {
         });
     }
 
-    fn central_panel(&mut self, ctx: &egui::Context, project: Option<&Project>) {
+    fn central_panel(&mut self, ctx: &egui::Context, project: Option<&Project>, game: Option<&GameReport>) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -367,8 +381,8 @@ impl App {
 
             // global views first (they don't need a loaded binary / selection)
             match self.center_tab {
-                CenterTab::Game => return game_view(ui, self.game.as_ref()),
-                CenterTab::Discovery => return discovery_view(ui, self.game.as_ref()),
+                CenterTab::Game => return game_view(ui, game),
+                CenterTab::Discovery => return self.discovery_view(ui, ctx, game),
                 CenterTab::Live => return self.live_view(ui, ctx),
                 _ => {}
             }
@@ -627,38 +641,160 @@ fn game_view(ui: &mut egui::Ui, game: Option<&GameReport>) {
     });
 }
 
-fn discovery_view(ui: &mut egui::Ui, game: Option<&GameReport>) {
-    let Some(g) = game else {
-        ui.centered_and_justified(|ui| {
-            ui.label(RichText::new("Load a game to scan for dev rooms, test maps & unused content").color(Palette::MUTED));
-        });
-        return;
-    };
-    ui.add_space(6.0);
-    if g.discovery.is_empty() {
-        ui.label(RichText::new("No notable content discovered.").color(Palette::MUTED));
-        return;
-    }
-    ui.horizontal_wrapped(|ui| {
-        for (cat, n) in g.discovery_summary() {
-            ui.label(RichText::new(format!("{cat}: {n}")).small().color(Palette::MN_JUMP));
-            ui.add_space(6.0);
-        }
-    });
-    ui.add_space(6.0);
-    let findings = &g.discovery;
-    let row_h = ui.text_style_height(&TextStyle::Body) + 8.0;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_h, findings.len(), |ui, range| {
-        for i in range {
-            let f = &findings[i];
-            ui.horizontal(|ui| {
-                ui.add_sized([110.0, 18.0], egui::Label::new(RichText::new(&f.category).strong().color(Palette::MN_RET)).halign(Align::LEFT));
-                ui.add_sized([150.0, 18.0], egui::Label::new(RichText::new(&f.matched).monospace().color(Palette::STR)).halign(Align::LEFT));
-                ui.label(RichText::new(&f.text).color(Palette::TEXT));
-                ui.label(RichText::new(format!("({})", f.source)).small().color(Palette::MUTED));
+impl App {
+    fn discovery_view(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, game: Option<&GameReport>) {
+        let Some(g) = game else {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new("Load a game folder to scan for dev rooms, test maps & unused content").color(Palette::MUTED));
             });
+            return;
+        };
+        if g.discovery.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new("No notable content discovered.").color(Palette::MUTED));
+            return;
         }
-    });
+
+        // controls row
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.disc_filter).hint_text("filter findings…").desired_width(220.0));
+            ui.checkbox(&mut self.disc_hide_noise, "Hide SDK/middleware noise");
+            if ui.button("Export…").clicked() {
+                self.disc_note = export_findings(&g.discovery);
+            }
+            if !self.disc_note.is_empty() {
+                ui.label(RichText::new(&self.disc_note).small().color(Palette::MUTED));
+            }
+        });
+
+        // category chips (click to toggle; none selected = show all)
+        ui.horizontal_wrapped(|ui| {
+            for (cat, n) in g.discovery_summary() {
+                let on = self.disc_cats.contains(&cat);
+                let col = if on { Palette::ACCENT } else { Palette::MN_JUMP };
+                if ui.add(egui::Label::new(RichText::new(format!("{cat} {n}")).small().color(col)).sense(Sense::click())).clicked() {
+                    if !self.disc_cats.remove(&cat) {
+                        self.disc_cats.insert(cat);
+                    }
+                }
+                ui.add_space(4.0);
+            }
+            if !self.disc_cats.is_empty() && ui.add(egui::Label::new(RichText::new("✕ clear").small().color(Palette::MUTED)).sense(Sense::click())).clicked() {
+                self.disc_cats.clear();
+            }
+        });
+        ui.separator();
+
+        // build filtered index list
+        let needle = self.disc_filter.to_lowercase();
+        let visible: Vec<usize> = g.discovery.iter().enumerate().filter(|(_, f)| {
+            if self.disc_hide_noise && insight_core::game::is_noise(f) {
+                return false;
+            }
+            if !self.disc_cats.is_empty() && !self.disc_cats.contains(&f.category) {
+                return false;
+            }
+            if !needle.is_empty()
+                && !f.text.to_lowercase().contains(&needle)
+                && !f.matched.to_lowercase().contains(&needle)
+                && !f.source.to_lowercase().contains(&needle)
+            {
+                return false;
+            }
+            true
+        }).map(|(i, _)| i).collect();
+
+        ui.label(RichText::new(format!("{} shown", visible.len())).small().color(Palette::MUTED));
+
+        let row_h = ui.text_style_height(&TextStyle::Body) + 8.0;
+        let mut clicked: Option<usize> = None;
+        // leave room at the bottom for the selected-finding detail/actions panel
+        let list_h = (ui.available_height() - 96.0).max(120.0);
+        egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show_rows(ui, row_h, visible.len(), |ui, range| {
+            for vi in range {
+                let i = visible[vi];
+                let f = &g.discovery[i];
+                let selected = self.disc_selected == Some(i);
+                let star = if insight_core::game::looks_actionable(f) { "★ " } else { "  " };
+                let row = ui.horizontal(|ui| {
+                    ui.add_sized([16.0, 18.0], egui::Label::new(RichText::new(star).color(Palette::MN_JUMP)).selectable(false));
+                    ui.add_sized([96.0, 18.0], egui::Label::new(RichText::new(&f.category).strong().color(Palette::MN_RET)).selectable(false).halign(Align::LEFT));
+                    ui.add_sized([140.0, 18.0], egui::Label::new(RichText::new(&f.matched).monospace().color(Palette::STR)).selectable(false).halign(Align::LEFT));
+                    ui.label(RichText::new(&f.text).color(if selected { Palette::ACCENT } else { Palette::TEXT }).text_style(TextStyle::Body));
+                    ui.label(RichText::new(format!("({})", f.source)).small().color(Palette::MUTED));
+                });
+                let rect = row.response.rect;
+                if selected {
+                    let mut bar = rect;
+                    bar.set_width(3.0);
+                    ui.painter().rect_filled(bar, 0.0, Palette::ACCENT);
+                }
+                if ui.interact(rect, ui.id().with(("discrow", i)), Sense::click()).clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+        if let Some(i) = clicked {
+            self.disc_selected = Some(i);
+        }
+
+        // detail / actions for the selected finding
+        if let Some(i) = self.disc_selected {
+            if let Some(f) = g.discovery.get(i) {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(f.text.clone());
+                        self.disc_note = "copied".into();
+                    }
+                    ui.label(RichText::new(&f.text).monospace().color(Palette::STR));
+                });
+                if insight_core::game::looks_actionable(f) {
+                    let eng = g.best().map(|d| d.engine_id.clone()).unwrap_or_default();
+                    ui.label(RichText::new(load_hint(&eng, &f.text)).small().color(Palette::MUTED));
+                }
+            }
+        }
+    }
+}
+
+fn export_findings(findings: &[insight_core::game::Finding]) -> String {
+    let mut csv = String::from("category,matched,source,text\n");
+    let esc = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    for f in findings {
+        csv.push_str(&format!("{},{},{},{}\n", f.category, esc(&f.matched), esc(&f.source), esc(&f.text)));
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        return match rfd::FileDialog::new().set_file_name("insight_discoveries.csv").save_file() {
+            Some(path) => match std::fs::write(&path, csv) {
+                Ok(_) => format!("saved {}", path.display()),
+                Err(e) => format!("save failed: {e}"),
+            },
+            None => "export cancelled".into(),
+        };
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let path = std::env::current_dir().unwrap_or_default().join("insight_discoveries.csv");
+        match std::fs::write(&path, csv) {
+            Ok(_) => format!("saved {}", path.display()),
+            Err(e) => format!("save failed: {e}"),
+        }
+    }
+}
+
+fn load_hint(engine_id: &str, name: &str) -> String {
+    match engine_id {
+        "chrome" => format!("Chrome Engine: try loading “{name}” from the in-game developer console, or open it in ChromED (Dying Light Developer Tools)."),
+        "unity" => format!("Unity: load with SceneManager.LoadScene(\"{name}\") via a BepInEx/mod, or select it in the scene list."),
+        "unreal" => format!("Unreal: open the console (~) and run:  open {name}"),
+        "source" => format!("Source: open the console (~) and run:  map {name}"),
+        "godot" => format!("Godot: change_scene_to_file(\"res://{name}\") from a mod script."),
+        "gamemaker" => format!("GameMaker: room_goto to “{name}” via an UndertaleModTool patch."),
+        _ => format!("Try loading “{name}” through the game's developer console or mod tools."),
+    }
 }
 
 fn kv(ui: &mut egui::Ui, key: &str, val: &str) {
