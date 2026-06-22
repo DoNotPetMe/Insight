@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::Path;
 
+use walkdir::WalkDir;
+
 #[derive(Clone)]
 pub struct Detection {
     pub engine_id: String,
@@ -125,18 +127,23 @@ pub fn detect_dir(path: &Path) -> Vec<Detection> {
         out.push(Detection { engine_id: "unreal".into(), name: name_of("unreal"), confidence: conf, evidence: ue, variant: String::new() });
     }
 
-    // Chrome Engine (Techland) — numbered dataN.pak archives, optional known exes
-    let chrome_paks = entries
-        .iter()
-        .filter(|e| {
-            let l = e.to_lowercase();
-            l.starts_with("data") && l.ends_with(".pak") && l[4..l.len() - 4].chars().all(|c| c.is_ascii_digit()) && l.len() > 8
-        })
-        .count();
-    let chrome_exe = entries.iter().any(|e| {
-        let l = e.to_lowercase();
-        l.contains("dyinglight") || l == "engine_x64_rwdi.exe" || l.contains("chrome")
-    });
+    // Chrome Engine (Techland) — numbered dataN.pak archives (often nested in
+    // DW/ or ph/source/) and/or known executables. Search two levels deep.
+    let mut chrome_paks = 0usize;
+    let mut chrome_exe = false;
+    for e in WalkDir::new(path).max_depth(3).into_iter().filter_map(|x| x.ok()) {
+        let n = e.file_name().to_string_lossy().to_lowercase();
+        if n.starts_with("data")
+            && n.ends_with(".pak")
+            && n.len() > 8
+            && n[4..n.len() - 4].chars().all(|c| c.is_ascii_digit())
+        {
+            chrome_paks += 1;
+        }
+        if n.contains("dyinglight") || n == "engine_x64_rwdi.exe" || n.contains("techland") {
+            chrome_exe = true;
+        }
+    }
     if chrome_paks > 0 || chrome_exe {
         let mut ev = Vec::new();
         if chrome_paks > 0 {
@@ -145,7 +152,7 @@ pub fn detect_dir(path: &Path) -> Vec<Detection> {
         if chrome_exe {
             ev.push("Chrome Engine executable".into());
         }
-        let conf = if chrome_paks > 0 && chrome_exe { 0.9 } else { 0.7 };
+        let conf = if chrome_paks > 0 && chrome_exe { 0.95 } else { 0.75 };
         out.push(Detection { engine_id: "chrome".into(), name: name_of("chrome"), confidence: conf, evidence: ev, variant: String::new() });
     }
 

@@ -223,6 +223,14 @@ impl eframe::App for App {
     }
 }
 
+/// Version + build identifier. In CI the commit SHA is embedded so a running
+/// app can be matched to an exact build; locally it shows "dev".
+fn build_tag() -> String {
+    let sha = option_env!("GITHUB_SHA").unwrap_or("dev");
+    let short = &sha[..sha.len().min(7)];
+    format!("v{} · {}", env!("CARGO_PKG_VERSION"), short)
+}
+
 impl App {
     fn top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
@@ -258,7 +266,7 @@ impl App {
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(4.0);
-                        ui.label(RichText::new("binary analysis & decompilation").small().color(Palette::MUTED));
+                        ui.label(RichText::new(build_tag()).small().monospace().color(Palette::MUTED));
                     });
                 });
             });
