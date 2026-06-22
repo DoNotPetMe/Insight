@@ -10,6 +10,7 @@ pub mod launch;
 pub mod live;
 pub mod loader;
 pub mod mods;
+pub mod pak;
 pub mod strings;
 
 pub use analysis::{analyze, Analysis, Function};
@@ -175,6 +176,33 @@ mod tests {
         assert!(mods::list_mods(&game)[0].installed.is_none());
         // the game's own paks are untouched
         assert!(game.join("DW").join("data0.pak").exists());
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn extracts_map_folder_from_pak() {
+        use std::io::Write;
+        let game = std::env::temp_dir().join(format!("insight_extract_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game);
+        std::fs::create_dir_all(game.join("DW")).unwrap();
+        let pak = game.join("DW").join("data3.pak");
+        let mut zw = zip::ZipWriter::new(std::fs::File::create(&pak).unwrap());
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("data/maps/devroom/devroom.map", opts).unwrap();
+        zw.write_all(b"MAP").unwrap();
+        zw.start_file("data/maps/devroom/info.scr", opts).unwrap();
+        zw.write_all(b"INFO").unwrap();
+        zw.start_file("data/maps/other/other.map", opts).unwrap();
+        zw.write_all(b"X").unwrap();
+        zw.finish().unwrap();
+
+        let dest = game.join("InsightExtracted");
+        let (arch, entry) = pak::parse_pak_source("pak:data3.pak", "data/maps/devroom/devroom.map").unwrap();
+        let res = pak::extract_folder_for(&game, &arch, &entry, &dest, true).unwrap();
+        assert_eq!(res.files, 2); // the whole devroom folder, not "other"
+        assert!(dest.join("data/maps/devroom/devroom.map").exists());
+        assert!(dest.join("data/maps/devroom/info.scr").exists());
+        assert!(!dest.join("data/maps/other/other.map").exists());
         let _ = std::fs::remove_dir_all(&game);
     }
 

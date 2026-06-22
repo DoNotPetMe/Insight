@@ -818,6 +818,34 @@ impl App {
                     ui.label(RichText::new(&f.text).monospace().color(Palette::STR));
                 });
 
+                // extract from the archive so it can be opened/edited
+                if f.source.starts_with("pak:") {
+                    if let Some((arch, entry)) = insight_core::pak::parse_pak_source(&f.source, &f.text) {
+                        let gdir = self.game_dir();
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(gdir.is_some(), egui::Button::new("⤓ Extract folder")).clicked() {
+                                if let Some(gd) = gdir.clone() {
+                                    let dest = gd.join("InsightExtracted");
+                                    self.launch_note = match insight_core::pak::extract_folder_for(&gd, &arch, &entry, &dest, true) {
+                                        Ok(r) => { open_path(&r.dest); format!("extracted {} files → {} — now open the .map in ChromED (Document ▸ Open)", r.files, r.dest.display()) }
+                                        Err(e) => e,
+                                    };
+                                }
+                            }
+                            if ui.add_enabled(gdir.is_some(), egui::Button::new("Extract file")).clicked() {
+                                if let Some(gd) = gdir.clone() {
+                                    let dest = gd.join("InsightExtracted");
+                                    self.launch_note = match insight_core::pak::extract_folder_for(&gd, &arch, &entry, &dest, false) {
+                                        Ok(r) => { open_path(&r.dest); format!("extracted → {}", r.dest.display()) }
+                                        Err(e) => e,
+                                    };
+                                }
+                            }
+                            ui.label(RichText::new(format!("from {arch}")).small().color(Palette::MUTED));
+                        });
+                    }
+                }
+
                 if insight_core::game::looks_actionable(&f) {
                     let eng = g.best().map(|d| d.engine_id.clone()).unwrap_or_default();
                     let plan = insight_core::launch::plan(&eng, self.game_exe.clone(), &f.text);
@@ -871,9 +899,9 @@ impl App {
                             }
                         });
                     }
-                    if !self.launch_note.is_empty() {
-                        ui.label(RichText::new(&self.launch_note).small().color(Palette::ACCENT));
-                    }
+                }
+                if !self.launch_note.is_empty() {
+                    ui.label(RichText::new(&self.launch_note).small().color(Palette::ACCENT));
                 }
             }
         }
