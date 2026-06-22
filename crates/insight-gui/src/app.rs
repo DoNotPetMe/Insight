@@ -673,10 +673,10 @@ impl App {
             for (cat, n) in g.discovery_summary() {
                 let on = self.disc_cats.contains(&cat);
                 let col = if on { Palette::ACCENT } else { Palette::MN_JUMP };
-                if ui.add(egui::Label::new(RichText::new(format!("{cat} {n}")).small().color(col)).sense(Sense::click())).clicked() {
-                    if !self.disc_cats.remove(&cat) {
-                        self.disc_cats.insert(cat);
-                    }
+                if ui.add(egui::Label::new(RichText::new(format!("{cat} {n}")).small().color(col)).sense(Sense::click())).clicked()
+                    && !self.disc_cats.remove(&cat)
+                {
+                    self.disc_cats.insert(cat);
                 }
                 ui.add_space(4.0);
             }
