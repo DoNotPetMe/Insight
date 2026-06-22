@@ -1076,7 +1076,25 @@ impl App {
                         if ui.button("Edit files").clicked() {
                             open_path(&m.project_dir);
                         }
-                        if let Some(pak) = &m.built_pak {
+                        if engine == "chrome" {
+                            if let Some(live) = &m.installed {
+                                let n = live.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+                                ui.label(RichText::new(format!("✓ live: {n}")).small().color(Palette::MN_JUMP));
+                                if ui.button("Uninstall").clicked() {
+                                    self.mod_note = match insight_core::mods::chrome_uninstall(&gdir, &m.name) {
+                                        Ok(_) => "uninstalled".into(),
+                                        Err(e) => e,
+                                    };
+                                    self.mods_loaded_for = None;
+                                }
+                            } else if ui.button("⤓ Install to game (live)").clicked() {
+                                self.mod_note = match insight_core::mods::chrome_install(&gdir, m) {
+                                    Ok(p) => format!("live → {}", p.display()),
+                                    Err(e) => e,
+                                };
+                                self.mods_loaded_for = None;
+                            }
+                        } else if let Some(pak) = &m.built_pak {
                             let mut en = m.enabled;
                             if ui.checkbox(&mut en, "enabled").changed() {
                                 if let Err(e) = insight_core::mods::set_enabled(pak, en) { self.mod_note = e; }

@@ -153,6 +153,32 @@ mod tests {
     }
 
     #[test]
+    fn chrome_turnkey_install() {
+        let game = std::env::temp_dir().join(format!("insight_install_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&game);
+        std::fs::create_dir_all(game.join("DW")).unwrap();
+        std::fs::write(game.join("DW").join("data0.pak"), b"x").unwrap();
+        std::fs::write(game.join("DW").join("data1.pak"), b"x").unwrap();
+
+        let proj = mods::new_mod_project(&game, "Skybox").unwrap();
+        std::fs::write(proj.join("data").join("sky.scr"), b"hi").unwrap();
+        let m = mods::list_mods(&game).into_iter().next().unwrap();
+
+        let dest = mods::chrome_install(&game, &m).unwrap();
+        assert_eq!(dest.parent().unwrap(), game.join("DW")); // dropped in the data dir
+        assert_eq!(dest.file_name().unwrap(), "data50.pak"); // free slot above floor
+        assert!(dest.exists());
+        assert!(mods::list_mods(&game)[0].installed.is_some());
+
+        mods::chrome_uninstall(&game, "Skybox").unwrap();
+        assert!(!dest.exists());
+        assert!(mods::list_mods(&game)[0].installed.is_none());
+        // the game's own paks are untouched
+        assert!(game.join("DW").join("data0.pak").exists());
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
     fn scans_inside_zip_pak_archives() {
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!("insight_pak_{}", std::process::id()));

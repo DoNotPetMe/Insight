@@ -10,6 +10,7 @@
 //! the artifacts and tells you where each engine loads them, but never writes
 //! into the game's own data folders without an explicit install step.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,8 @@ pub struct ModInfo {
     pub built_pak: Option<PathBuf>,
     pub enabled: bool,
     pub files: usize,
+    /// the live `dataN.pak` Insight dropped into the game, if installed
+    pub installed: Option<PathBuf>,
 }
 
 pub fn mods_dir(game_dir: &Path) -> PathBuf {
@@ -72,7 +75,8 @@ pub fn list_mods(game_dir: &Path) -> Vec<ModInfo> {
         } else {
             (None, false)
         };
-        out.push(ModInfo { name, project_dir: p, built_pak, enabled, files });
+        let installed = installed_pak(game_dir, &name);
+        out.push(ModInfo { name, project_dir: p, built_pak, enabled, files, installed });
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out
@@ -157,6 +161,120 @@ pub fn install_to(pak: &Path, target_dir: &Path) -> Result<PathBuf, String> {
     let dest = target_dir.join(name);
     fs::copy(pak, &dest).map_err(|e| format!("install: {e}"))?;
     Ok(dest)
+}
+
+// ---------------------------------------------------------------------------
+// Turnkey Chrome Engine install (drop a live dataN.pak into the game)
+// ---------------------------------------------------------------------------
+fn parse_data_slot(name: &str) -> Option<u32> {
+    let low = name.to_lowercase();
+    let stem = low.strip_prefix("data")?.strip_suffix(".pak")?;
+    if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    stem.parse().ok()
+}
+
+/// The game's primary data folder — the directory holding the most dataN.pak.
+pub fn chrome_data_dir(game_dir: &Path) -> Option<PathBuf> {
+    let mut counts: HashMap<PathBuf, usize> = HashMap::new();
+    for e in WalkDir::new(game_dir).max_depth(4).into_iter().filter_map(|x| x.ok()) {
+        if !e.file_type().is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if parse_data_slot(&name).is_some() {
+            if let Some(parent) = e.path().parent() {
+                *counts.entry(parent.to_path_buf()).or_default() += 1;
+            }
+        }
+    }
+    counts.into_iter().max_by_key(|(_, c)| *c).map(|(p, _)| p)
+}
+
+/// The next free `dataN` slot in `dir`, at least `floor`, above all existing
+/// paks (higher numbers load last in Chrome Engine, so the mod overrides).
+pub fn next_free_slot(dir: &Path, floor: u32) -> u32 {
+    let mut max_existing = 0u32;
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if let Some(n) = parse_data_slot(&e.file_name().to_string_lossy()) {
+                max_existing = max_existing.max(n);
+            }
+        }
+    }
+    let mut n = (max_existing + 1).max(floor);
+    while dir.join(format!("data{n}.pak")).exists() {
+        n += 1;
+    }
+    n
+}
+
+/// One-click Chrome Engine install: build the mod and drop it into the game's
+/// data folder as a free high-numbered dataN.pak so it goes live immediately.
+pub fn chrome_install(game_dir: &Path, m: &ModInfo) -> Result<PathBuf, String> {
+    let built = build_mod(game_dir, m, "chrome")?;
+    let dir = chrome_data_dir(game_dir).unwrap_or_else(|| game_dir.to_path_buf());
+    let slot = next_free_slot(&dir, 50);
+    let dest = dir.join(format!("data{slot}.pak"));
+    fs::copy(&built, &dest).map_err(|e| format!("install: {e}"))?;
+    record_install(game_dir, &m.name, &dest);
+    Ok(dest)
+}
+
+/// Remove the live dataN.pak Insight installed for this mod (never touches the
+/// game's own paks — only files recorded in Insight's manifest).
+pub fn chrome_uninstall(game_dir: &Path, name: &str) -> Result<(), String> {
+    let mut kept = Vec::new();
+    let mut removed = false;
+    for (n, path) in read_manifest(game_dir) {
+        if n == name {
+            let _ = fs::remove_file(&path);
+            removed = true;
+        } else {
+            kept.push((n, path));
+        }
+    }
+    write_manifest(game_dir, &kept);
+    if removed {
+        Ok(())
+    } else {
+        Err("nothing installed for this mod".into())
+    }
+}
+
+fn manifest_path(game_dir: &Path) -> PathBuf {
+    mods_dir(game_dir).join("installed.tsv")
+}
+
+fn read_manifest(game_dir: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(data) = fs::read_to_string(manifest_path(game_dir)) else { return Vec::new() };
+    data.lines()
+        .filter_map(|l| {
+            let (n, p) = l.split_once('\t')?;
+            Some((n.to_string(), PathBuf::from(p)))
+        })
+        .collect()
+}
+
+fn write_manifest(game_dir: &Path, entries: &[(String, PathBuf)]) {
+    let _ = fs::create_dir_all(mods_dir(game_dir));
+    let body: String = entries.iter().map(|(n, p)| format!("{n}\t{}\n", p.display())).collect();
+    let _ = fs::write(manifest_path(game_dir), body);
+}
+
+fn record_install(game_dir: &Path, name: &str, dest: &Path) {
+    let mut entries = read_manifest(game_dir);
+    entries.retain(|(n, _)| n != name);
+    entries.push((name.to_string(), dest.to_path_buf()));
+    write_manifest(game_dir, &entries);
+}
+
+fn installed_pak(game_dir: &Path, name: &str) -> Option<PathBuf> {
+    read_manifest(game_dir)
+        .into_iter()
+        .find(|(n, p)| n == name && p.exists())
+        .map(|(_, p)| p)
 }
 
 fn sanitize(name: &str) -> String {
